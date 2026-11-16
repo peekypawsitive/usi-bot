@@ -28,16 +28,41 @@
     "mopPost": "/internal/form/mop-post-submit"
   },
   "triggers": {
-    "onAppInstall": "/internal/triggers/on-app-install"
+    "onCommentCreate": "/internal/triggers/on-comment-create",
+    "onAppInstall": "/internal/triggers/on-app-install",
+    "onAppUpgrade": "/internal/triggers/on-app-upgrade"
   },
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch"
   },
   "permissions": {
-    "reddit": true
+    "reddit": true,
+    "http": {
+      "enable": true,
+      "domains": ["www.googleapis.com", "api.spotify.com", "accounts.spotify.com"]
+    }
   },
   "dev": {
     "subreddit": "trials998_dev"
+  },
+  "settings": {
+    "global": {
+      "youtube-api-key": {
+        "type": "string",
+        "label": "YouTube Data API Key",
+        "isSecret": true
+      },
+      "spotify-client-id": {
+        "type": "string",
+        "label": "Spotify clientid",
+        "isSecret": true
+      },
+      "spotify-client-secret": {
+        "type": "string",
+        "label": "Spotify clientsecret",
+        "isSecret": true
+      }
+    }
   }
 }

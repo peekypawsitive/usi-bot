@@ -4,6 +4,7 @@ import { context } from '@devvit/web/server';
 import { isT1, isT3 } from '@devvit/shared-types/tid.js';
 import { handleNuke, handleNukePost } from '../core/nuke';
 
+//form typedefs
 type NukeFormValues = {
   remove?: boolean;
   lock?: boolean;
@@ -11,104 +12,172 @@ type NukeFormValues = {
   targetId?: string;
 };
 
-export const forms = new Hono();
-
-const normalizeValues = (values: NukeFormValues) => ({
-  remove: Boolean(values.remove),
-  lock: Boolean(values.lock),
-  skipDistinguished: Boolean(values.skipDistinguished),
-});
-
-const getTargetId = (values: NukeFormValues) => {
-  if (typeof values.targetId === 'string' && values.targetId.trim()) {
-    return values.targetId.trim();
-  }
-
-  return context.postId;
+type NukeOptions = {
+  remove: boolean;
+  lock: boolean;
+  skipDistinguished: boolean;
 };
 
-forms.post('/mop-comment-submit', async (c) => {
-  const values = await c.req.json<NukeFormValues>();
-  console.log('values', values);
-  const normalized = normalizeValues(values);
 
-  if (!normalized.lock && !normalized.remove) {
-    return c.json<UiResponse>(
-      {
-        showToast: 'You must select either lock or remove.',
-      },
-      200
-    );
-  }
+//constants
+const ERROR_MESSAGES = {
+  noAction: 'You must select either lock or remove.',
+  invalidTarget: 'Mop failed! Please try again later.',
+};
 
-  const targetId = getTargetId(values);
-  if (!isT1(targetId)) {
-    console.error('targetId is not a T1', targetId);
-    return c.json<UiResponse>(
-      {
-        showToast: 'Mop failed! Please try again later.',
-      },
-      200
-    );
-  }
 
-  const result = await handleNuke({
-    ...normalized,
-    commentId: targetId,
-    subredditId: context.subredditId,
-  });
 
-  console.log(
-    `Mop result - ${result.success ? 'success' : 'fail'} - ${result.message}`
-  );
+//form helpers
+function normalizeValues(values: NukeFormValues): NukeOptions {
+  return {
+    remove: Boolean(values.remove),
+    lock: Boolean(values.lock),
+    skipDistinguished: Boolean(values.skipDistinguished),
+  };
+}
+
+function getTargetId(values: NukeFormValues): string {
+  const targetId = values.targetId?.trim();
+
+  return targetId || context.postId;
+}
+
+function hasValidAction(options: NukeOptions): boolean {
+  return options.lock || options.remove;
+}
+
+//response helpers
+function showToast(message: string) {
+  return (c: Parameters<Parameters<typeof forms.post>[1]>[0]) =>
+    c.json<UiResponse>({ showToast: message }, 200);
+}
+
+function showResult(
+  result: { success: boolean; message: string },
+  c: Parameters<Parameters<typeof forms.post>[1]>[0]
+) {
+  const status = result.success ? 'Success' : 'Failed';
+
+  console.log(`Mop result - ${status.toLowerCase()} - ${result.message}`);
 
   return c.json<UiResponse>(
     {
-      showToast: `${result.success ? 'Success' : 'Failed'} : ${result.message}`,
+      showToast: `${status} : ${result.message}`,
     },
     200
+  );
+}
+
+
+//validation
+function validateAction(
+  options: NukeOptions,
+  c: Parameters<Parameters<typeof forms.post>[1]>[0]
+) {
+  if (hasValidAction(options)) {
+    return null;
+  }
+
+  return c.json<UiResponse>(
+    { showToast: ERROR_MESSAGES.noAction },
+    200
+  );
+}
+
+function validateTarget(
+  targetId: string,
+  isValid: (id: string) => boolean,
+  type: string,
+  c: Parameters<Parameters<typeof forms.post>[1]>[0]
+) {
+  if (isValid(targetId)) {
+    return null;
+  }
+
+  console.error(`targetId is not a ${type}`, targetId);
+
+  return c.json<UiResponse>(
+    { showToast: ERROR_MESSAGES.invalidTarget },
+    200
+  );
+}
+
+
+//request processing
+async function getFormValues(c: any): Promise<NukeFormValues> {
+  const values = await c.req.json<NukeFormValues>();
+
+  console.log('values', values);
+
+  return values;
+}
+
+async function processNuke(
+  c: any,
+  isValidTarget: (id: string) => boolean,
+  targetType: string,
+  execute: (targetId: string, options: NukeOptions) => Promise<{
+    success: boolean;
+    message: string;
+  }>
+) {
+  const values = await getFormValues(c);
+  const options = normalizeValues(values);
+
+  const actionError = validateAction(options, c);
+
+  if (actionError) {
+    return actionError;
+  }
+
+  const targetId = getTargetId(values);
+  const targetError = validateTarget(
+    targetId,
+    isValidTarget,
+    targetType,
+    c
+  );
+
+  if (targetError) {
+    return targetError;
+  }
+
+  const result = await execute(targetId, options);
+
+  return showResult(result, c);
+}
+
+
+
+
+//hono/devvit routes
+//*************************************************************************************************************
+export const forms = new Hono();
+
+forms.post('/mop-comment-submit', async (c) => {
+  return processNuke(
+    c,
+    isT1,
+    'T1',
+    (commentId, options) =>
+      handleNuke({
+        ...options,
+        commentId,
+        subredditId: context.subredditId,
+      })
   );
 });
 
 forms.post('/mop-post-submit', async (c) => {
-  const values = await c.req.json<NukeFormValues>();
-  console.log('values', values);
-  const normalized = normalizeValues(values);
-
-  if (!normalized.lock && !normalized.remove) {
-    return c.json<UiResponse>(
-      {
-        showToast: 'You must select either lock or remove.',
-      },
-      200
-    );
-  }
-
-  const targetId = getTargetId(values);
-  if (!isT3(targetId)) {
-    console.error('targetId is not a T3', targetId);
-    return c.json<UiResponse>(
-      {
-        showToast: 'Mop failed! Please try again later.',
-      },
-      200
-    );
-  }
-
-  const result = await handleNukePost({
-    ...normalized,
-    postId: targetId,
-    subredditId: context.subredditId,
-  });
-
-  console.log(
-    `Mop result - ${result.success ? 'success' : 'fail'} - ${result.message}`
-  );
-
-  return c.json<UiResponse>(
-    {
-      showToast: `${result.success ? 'Success' : 'Failed'} : ${result.message}`,
-    },
-    200
+  return processNuke(
+    c,
+    isT3,
+    'T3',
+    (postId, options) =>
+      handleNukePost({
+        ...options,
+        postId,
+        subredditId: context.subredditId,
+      })
   );
 });
